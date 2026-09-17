@@ -1,0 +1,1 @@
+# No requiere paquetes externos. Usa solo la biblioteca estándar de Python.

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cuentas por cobrar — Control gerencial</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">CONTROL FINANCIERO</div>
+      <h1>Cuentas por cobrar</h1>
+      <p>Deuda, cobros, conciliación y emparejamiento persistente.</p>
+    </div>
+    <div class="top-actions">
+      <span id="dbState" class="pill ok">Base local activa</span>
+      <button class="btn ghost" onclick="refreshAll()">Actualizar</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="deuda">Deuda <small>clientes</small></button>
+    <button class="tab" data-tab="no-emparejados">No emparejados <span id="unmatchedBadge" class="badge">0</span></button>
+    <button class="tab" data-tab="cruce">Cruce</button>
+    <button class="tab" data-tab="dte">DTE</button>
+    <button class="tab" data-tab="reliquidacion">Reliquidación <span id="reliqBadge" class="badge neutral">0</span></button>
+    <button class="tab" data-tab="extracto">Extracto</button>
+    <button class="tab" data-tab="empresa">Empresa</button>
+    <button class="tab" data-tab="subir">Subir datos</button>
+  </nav>
+
+  <main>
+    <section id="dashboard" class="panel active">
+      <div class="section-head">
+        <div><h2>Control gerencial</h2><p>El plazo de pago configurado se aplica desde la fecha del DTE.</p></div>
+        <div class="settings-inline"><label>TC actual BCB <input id="tcCurrent" type="number" step="0.01"></label><button class="btn" onclick="saveSettings()">Guardar TC</button></div>
+      </div>
+      <div id="kpis" class="kpi-grid"></div>
+      <div class="chart-grid">
+        <article class="card chart-card"><div class="card-title"><h3>Cartera por empresa</h3><span>Por vencer vs vencido</span></div><canvas id="companyChart"></canvas></article>
+        <article class="card chart-card"><div class="card-title"><h3>Antigüedad de deuda</h3><span>Solo saldos positivos vencidos</span></div><canvas id="agingChart"></canvas></article>
+        <article class="card chart-card"><div class="card-title"><h3>Estado de cartera</h3><span>Distribución del saldo</span></div><canvas id="statusChart"></canvas></article>
+        <article class="card chart-card"><div class="card-title"><h3>Cobros por mes</h3><span>Aplicaciones registradas</span></div><canvas id="collectionsChart"></canvas></article>
+      </div>
+      <article class="card">
+        <div class="card-title"><h3>Clientes con mayor mora</h3><span>Ordenados por saldo vencido</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Empresa</th><th class="num">Vencido Bs</th><th class="num">DTE vencidas</th><th class="num">Máx. días mora</th><th>Riesgo</th></tr></thead><tbody id="morososBody"></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="deuda" class="panel">
+      <div class="section-head"><div><h2>Deuda</h2><p><strong>DTE y Reliquidación siempre aparecen aquí.</strong> Las reliquidaciones negativas se muestran como ajustes y afectan el saldo neto.</p></div></div>
+      <div class="filters">
+        <input id="debtSearch" placeholder="Buscar empresa, estado o concepto…" oninput="renderDebtTable()">
+        <input id="debtTableAmount" type="number" step="0.01" placeholder="Buscar monto Bs" oninput="renderDebtTable()">
+        <select id="debtStatus" onchange="renderDebtTable()"><option value="">Todos los estados</option><option>VENCIDO</option><option>POR VENCER</option><option>PAGADO</option><option>AJUSTE</option></select>
+        <select id="debtConcept" onchange="renderDebtTable()"><option value="">DTE + Reliquidación</option><option>DTE</option><option>Reliquidación</option></select>
+      </div>
+      <article class="card"><div class="table-wrap tall"><table><thead><tr><th>Detalle</th><th>Fecha DTE</th><th>Cheque/referencia</th><th>Código transacción</th><th class="num">Importe DTE Bs.</th><th class="num">Pagado Bs.</th><th class="num">Pendiente Bs.</th><th class="num">Pendiente $us</th><th>Fecha límite</th><th>Fecha de pago</th><th class="num">Días DTE → Pago</th><th class="num">Días de mora</th><th>Estado</th><th>Origen cruce</th><th class="num">TC fecha DTE BCB</th><th class="num">TC fecha pago BCB</th><th class="num">TC Ref vencimiento</th><th class="num">TC actual BCB</th><th class="num">USD al vencimiento</th><th class="num">USD hoy</th><th class="num">Erosión USD</th><th class="num">Erosión Bs</th><th class="num">Erosión %</th></tr></thead><tbody id="debtBody"></tbody></table></div></article>
+    </section>
+
+    <section id="no-emparejados" class="panel">
+      <div class="section-head"><div><h2>Emparejamiento manual</h2><p>Esta pestaña contiene <strong>solo lo pendiente de emparejar</strong>. Al guardar un cruce, queda como <strong>MANUAL</strong> en SQLite y no vuelve a aparecer aquí al recargar ni al importar nuevamente el mismo registro.</p></div></div>
+      <div class="match-layout">
+        <article class="card select-card"><div class="card-title"><h3>1. Depósito sin asignar</h3><span id="depCount"></span></div><div class="mini-search"><input id="depSearch" placeholder="Buscar referencia, transacción o descripción…" oninput="renderUnmatched()"><div class="amount-row"><input id="depAmountSearch" type="number" step="0.01" placeholder="Monto depósito Bs" oninput="renderUnmatched()"><button class="btn mini" onclick="useSelectedDepositAmount()" title="Buscar deuda por el monto del depósito seleccionado">Buscar deuda = depósito</button></div></div><div id="depositList" class="pick-list"></div></article>
+        <article class="card match-center">
+          <div class="match-icon">⇄</div>
+          <div class="multi-title">Distribución del depósito</div>
+          <div id="allocationEditor" class="allocation-editor"><div class="muted small">Seleccione uno o varios DTE/Reliquidaciones.</div></div>
+          <label>Nota opcional<textarea id="matchNote" placeholder="Ej.: confirmado con comprobante / conciliación manual"></textarea></label>
+          <label>Tolerancia para búsqueda por monto (Bs)<input id="amountTolerance" type="number" min="0" step="0.01" value="0.01" oninput="renderUnmatched()"></label>
+          <div class="combo-box"><b>Coincidencias por suma de 2 documentos</b><div id="comboSuggestions" class="combo-suggestions"></div></div>
+          <div id="matchHint" class="hint">Seleccione un depósito y uno o varios DTE/Reliquidaciones.</div>
+          <button class="btn primary wide" onclick="createManualMatch()">Guardar emparejamiento MANUAL múltiple</button>
+        </article>
+        <article class="card select-card"><div class="card-title"><h3>2. DTE / Reliquidaciones pendientes</h3><span id="debtUnCount"></span></div><div class="mini-search"><input id="unDebtSearch" placeholder="Buscar empresa, DTE o Reliquidación…" oninput="renderUnmatched()"><div class="amount-row"><input id="unDebtAmountSearch" type="number" step="0.01" placeholder="Monto deuda Bs" oninput="renderUnmatched()"><button class="btn mini" onclick="useSelectedDebtAmount()" title="Buscar depósito por la suma de los documentos seleccionados">Buscar depósito = suma seleccionada</button></div></div><div id="unDebtList" class="pick-list"></div></article>
+      </div>
+    </section>
+
+    <section id="cruce" class="panel">
+      <div class="section-head"><div><h2>Cruce</h2><p>Historial consolidado de cruces importados desde Excel, automáticos y manuales.</p></div></div>
+      <article class="card"><div class="table-wrap tall"><table><thead><tr><th>Estado</th><th>Origen</th><th>Fecha DTE</th><th>Empresa</th><th>Concepto</th><th class="num">Deuda</th><th>Fecha depósito</th><th>Referencia</th><th>Cód. transacción</th><th class="num">Aplicado</th><th>Nota</th><th></th></tr></thead><tbody id="matchBody"></tbody></table></div></article>
+    </section>
+
+    <section id="dte" class="panel"><div class="section-head"><div><h2>DTE</h2><p>Obligaciones cuyo concepto es DTE.</p></div></div><article class="card"><div class="table-wrap tall"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Nombre empresa</th><th class="num">Monto</th></tr></thead><tbody id="dteBody"></tbody></table></div></article></section>
+    <section id="reliquidacion" class="panel"><div class="section-head"><div><h2>Reliquidación</h2><p>Reliquidaciones registradas como parte de la deuda. Los valores negativos se mantienen como ajustes y los positivos como obligaciones.</p></div></div><div class="filters"><input id="reliqSearch" placeholder="Buscar empresa…" oninput="renderReliquidacion()"><input id="reliqAmount" type="number" step="0.01" placeholder="Buscar monto Bs" oninput="renderReliquidacion()"></div><article class="card"><div class="table-wrap tall"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Nombre empresa</th><th class="num">Monto</th><th>Tipo</th></tr></thead><tbody id="reliqBody"></tbody></table></div></article></section>
+    <section id="extracto" class="panel"><div class="section-head"><div><h2>Extracto</h2><p>Movimientos bancarios separados en <strong>Debe/Reverso</strong> y <strong>Haber/Crédito</strong>. Cuando un crédito es anulado por el mismo importe negativo y luego reaplicado, el primero queda REVERSADO y solo el último crédito vigente puede emparejarse.</p></div></div><div class="filters"><input id="extractSearch" placeholder="Buscar descripción, referencia, transacción o estado…" oninput="renderExtract(state.extracto||[])"><input id="extractAmount" type="number" step="0.01" placeholder="Buscar monto Bs" oninput="renderExtract(state.extracto||[])"></div><article class="card"><div class="table-wrap tall"><table><thead><tr><th>Fecha/hora</th><th>Sucursal/agencia</th><th>Descripción</th><th>Cheque/referencia</th><th>Código transacción</th><th class="num">Debe / Reverso</th><th class="num">Haber / Crédito</th><th>Estado movimiento</th></tr></thead><tbody id="extractBody"></tbody></table></div></article></section>
+    <section id="empresa" class="panel"><div class="section-head"><div><h2>Empresa</h2><p>Catálogo de clientes y abreviaturas.</p></div></div><article class="card compact-card"><div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Abreviatura</th></tr></thead><tbody id="companyBody"></tbody></table></div></article></section>
+
+    <section id="subir" class="panel">
+      <div class="section-head"><div><h2>Subir datos</h2><p>Puede cargar una versión nueva de tu .XLSM/.XLSX. Los cruces MANUAL se identifican por registros estables y se conservan.</p></div></div>
+      <div class="upload-grid">
+        <article class="card upload-card"><div class="upload-icon">↑</div><h3>Importar libro de Excel</h3><p>Se leen las hojas <b>DTE</b>, <b>extracto</b>, <b>Empresa</b> y, si existe, <b>clientes</b>. Las macros no se ejecutan.</p><input id="uploadFile" type="file" accept=".xlsm,.xlsx"><button class="btn primary wide" onclick="uploadWorkbook()">Importar archivo</button><div id="uploadStatus" class="hint"></div></article>
+        <article class="card"><div class="card-title"><h3>Configuración</h3></div><label class="form-row">Plazo de pago (días)<input id="paymentDays" type="number" min="1" max="365"></label><label class="form-row">TC actual BCB<input id="tcSetting" type="number" step="0.01"></label><button class="btn" onclick="saveSettingsFull()">Guardar configuración</button><hr><div class="card-title"><h3>Últimas importaciones</h3></div><div id="importHistory" class="history"></div></article>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
