@@ -1,12 +1,13 @@
 const state = {
-  summary: null,
-  debts: [],
-  unmatched: { debts: [], deposits: [] },
-  matches: [],
-  reliquidaciones: [],
-  extracto: [],
-  selectedDebts: [],
-  selectedDeposit: null,
+    summary: null,
+    debts: [],
+    companies: [],
+    unmatched: { debts: [], deposits: []},
+    matches: [],
+    reliquidaciones: [],
+    extracto: [],
+    selectedDebts: [],
+    selectedDeposit: null
 };
 const $ = (s) => document.querySelector(s),
   $$ = (s) => [...document.querySelectorAll(s)];
@@ -101,6 +102,7 @@ async function refreshAll() {
     state.matches = matches;
     state.reliquidaciones = reliquidaciones;
     state.extracto = extracto;
+    state.companies = companies;
     renderDashboard();
     renderDebtTable();
     renderUnmatched();
@@ -109,6 +111,7 @@ async function refreshAll() {
     renderReliquidacion();
     renderExtract(extracto);
     renderCompanies(companies);
+    renderCompanySelectors();
     renderSettings(settings);
     renderImports(imports);
     $("#unmatchedBadge").textContent =
@@ -224,46 +227,313 @@ function renderDashboard() {
       )
       .join("") ||
     '<tr><td colspan="5" class="muted">Sin saldos vencidos.</td></tr>';
+    renderCompanyPortfolio();
 }
 function shortName(s) {
   return s.length > 22 ? s.slice(0, 20) + "…" : s;
 }
 
 function renderDebtTable() {
-  const q = $("#debtSearch").value.toLowerCase(),
-    st = $("#debtStatus").value.toUpperCase(),
-    co = $("#debtConcept").value.toUpperCase(),
-    amt = parseAmount($("#debtTableAmount").value);
-  let rows = state.debts.filter(
-    (r) =>
-      (!q ||
-        (
-          r.company +
-          " " +
-          r.status +
-          " " +
-          r.concept +
-          " " +
-          r.amount +
-          " " +
-          r.pending
-        )
-          .toLowerCase()
-          .includes(q)) &&
-      (!st || r.status.toUpperCase().includes(st)) &&
-      (!co || r.concept.toUpperCase() === co) &&
-      (amt === null ||
-        Math.abs(Number(r.amount) - amt) <= 0.01 ||
-        Math.abs(Number(r.pending) - amt) <= 0.01),
-  );
-  $("#debtBody").innerHTML =
-    rows
-      .map(
-        (r) =>
-          `<tr><td><b>${esc(r.concept)}</b> - ${esc(r.company)}</td><td>${dateFmt(r.date)}</td><td>${esc(r.reference || "")}</td><td>${esc(r.transaction_code || "")}</td><td class="num">${money(r.amount)}</td><td class="num">${money(r.paid)}</td><td class="num">${money(r.pending)}</td><td class="num">${money(r.pending_usd)}</td><td>${dateFmt(r.due_date)}</td><td>${dateTimeFmt(r.last_payment)}</td><td class="num">${r.days_to_payment ?? "—"}</td><td class="num">${r.days_late}</td><td>${badge(r.status)}</td><td>${r.manual ? badge("MANUAL") : r.match_count ? '<span class="status">EXCEL / AUTO</span>' : "—"}</td><td class="num">${r.tc_dte == null ? "—" : money(r.tc_dte)}</td><td class="num">${r.tc_payment == null ? "—" : money(r.tc_payment)}</td><td class="num">${r.tc_due == null ? "—" : money(r.tc_due)}</td><td class="num">${money(r.tc_current)}</td><td class="num">${r.usd_due == null ? "—" : money(r.usd_due)}</td><td class="num">${r.usd_today == null ? "—" : money(r.usd_today)}</td><td class="num">${r.erosion_usd == null ? "—" : money(r.erosion_usd)}</td><td class="num">${r.erosion_bs == null ? "—" : money(r.erosion_bs)}</td><td class="num">${r.erosion_pct == null ? "—" : money(r.erosion_pct) + "%"}</td></tr>`,
-      )
-      .join("") ||
-    '<tr><td colspan="23" class="muted">Sin resultados.</td></tr>';
+
+    const q =
+        $('#debtSearch')
+        .value
+        .toLowerCase();
+
+    const st =
+        $('#debtStatus')
+        .value
+        .toUpperCase();
+
+    const co =
+        $('#debtConcept')
+        .value
+        .toUpperCase();
+
+    const amt =
+        parseAmount(
+            $('#debtTableAmount')
+            .value
+        );
+
+    const rows =
+        state.debts.filter(r => {
+
+            const haystack = (
+
+                (r.company || '')
+                + ' '
+                + (r.status || '')
+                + ' '
+                + (r.concept || '')
+                + ' '
+                + (r.dte_number || '')
+                + ' '
+                + (r.voucher || '')
+                + ' '
+                + (r.reference || '')
+                + ' '
+                + (r.transaction_code || '')
+
+            ).toLowerCase();
+
+            return (
+
+                (
+                    !q
+                    || haystack.includes(q)
+                )
+
+                && (
+                    !st
+                    || r.status
+                        .toUpperCase()
+                        .includes(st)
+                )
+
+                && (
+                    !co
+                    || r.concept
+                        .toUpperCase()
+                        === co
+                )
+
+                && (
+                    amt === null
+
+                    || Math.abs(
+                        Number(r.debit)
+                        - amt
+                    ) <= 0.01
+
+                    || Math.abs(
+                        Number(r.credit)
+                        - amt
+                    ) <= 0.01
+
+                    || Math.abs(
+                        Number(r.balance)
+                        - amt
+                    ) <= 0.01
+                )
+            );
+        });
+
+    $('#debtBody').innerHTML =
+        rows.map(r => `
+
+            <tr>
+
+                <td>
+                    ${esc(r.company)}
+                </td>
+
+                <td>
+                    ${dateFmt(r.date)}
+                </td>
+
+                <td>
+                    ${esc(r.concept)}
+                </td>
+
+                <td>
+                    ${esc(
+                        r.transaction_code
+                        || ''
+                    )}
+                </td>
+
+                <td>
+
+                    <input
+                        class="cell-input"
+
+                        value="${
+                            esc(
+                                r.dte_number
+                                || ''
+                            )
+                        }"
+
+                        placeholder="N.º DTE"
+
+                        onchange="
+                            saveDebtMeta(
+                                '${r.id}',
+                                'dte_number',
+                                this.value
+                            )
+                        "
+                    >
+
+                </td>
+
+                <td class="num">
+                    ${money(r.debit)}
+                </td>
+
+                <td class="num">
+                    ${money(r.credit)}
+                </td>
+
+                <td class="num">
+                    <b>
+                        ${money(r.balance)}
+                    </b>
+                </td>
+
+                <td>
+
+                    <input
+                        class="cell-input"
+
+                        value="${
+                            esc(
+                                r.voucher
+                                || r.reference
+                                || ''
+                            )
+                        }"
+
+                        placeholder="Cbte"
+
+                        onchange="
+                            saveDebtMeta(
+                                '${r.id}',
+                                'voucher',
+                                this.value
+                            )
+                        "
+                    >
+
+                </td>
+
+                <td class="num">
+                    ${money(r.pending_usd)}
+                </td>
+
+                <td>
+                    ${dateFmt(r.due_date)}
+                </td>
+
+                <td>
+                    ${dateTimeFmt(
+                        r.last_payment
+                    )}
+                </td>
+
+                <td class="num">
+                    ${
+                        r.days_to_payment
+                        ?? '—'
+                    }
+                </td>
+
+                <td class="num">
+                    ${r.days_late}
+                </td>
+
+                <td>
+                    ${badge(r.status)}
+                </td>
+
+                <td>
+
+                    ${
+                        r.manual
+                        ? badge('MANUAL')
+
+                        : r.match_count
+                        ? '<span class="status">EXCEL / AUTO</span>'
+
+                        : '—'
+                    }
+
+                </td>
+
+                <td class="num">
+                    ${
+                        r.tc_dte == null
+                        ? '—'
+                        : money(r.tc_dte)
+                    }
+                </td>
+
+                <td class="num">
+                    ${
+                        r.tc_payment == null
+                        ? '—'
+                        : money(r.tc_payment)
+                    }
+                </td>
+
+                <td class="num">
+                    ${
+                        r.tc_due == null
+                        ? '—'
+                        : money(r.tc_due)
+                    }
+                </td>
+
+                <td class="num">
+                    ${money(r.tc_current)}
+                </td>
+
+                <td class="num">
+                    ${
+                        r.usd_due == null
+                        ? '—'
+                        : money(r.usd_due)
+                    }
+                </td>
+
+                <td class="num">
+                    ${
+                        r.usd_today == null
+                        ? '—'
+                        : money(r.usd_today)
+                    }
+                </td>
+
+                <td class="num">
+                    ${
+                        r.erosion_usd == null
+                        ? '—'
+                        : money(r.erosion_usd)
+                    }
+                </td>
+
+                <td class="num">
+                    ${
+                        r.erosion_bs == null
+                        ? '—'
+                        : money(r.erosion_bs)
+                    }
+                </td>
+
+                <td class="num">
+                    ${
+                        r.erosion_pct == null
+                        ? '—'
+                        : money(r.erosion_pct)
+                            + '%'
+                    }
+                </td>
+
+            </tr>
+
+        `).join('')
+
+        || `
+            <tr>
+                <td
+                    colspan="25"
+                    class="muted"
+                >
+                    Sin resultados.
+                </td>
+            </tr>
+        `;
 }
 
 function parseAmount(v) {
@@ -545,6 +815,61 @@ async function deleteManual(id) {
   }
 }
 
+async function saveOpeningBalance() {
+  const posted_at = $("#openingDate").value;
+  const side = $("#openingSide").value;
+  const amount = parseFloat($("#openingAmount").value);
+  const note = $("#openingNote").value.trim();
+
+  if (!posted_at) {
+    return toast("Seleccione la fecha del balance.", true);
+  }
+
+  if (!amount || amount <= 0) {
+    return toast("Ingrese un monto válido.", true);
+  }
+
+  try {
+    await api("/api/opening-balance", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        posted_at,
+        side,
+        amount,
+        note,
+      }),
+    });
+
+    $("#openingAmount").value = "";
+    $("#openingNote").value = "";
+
+    toast("Balance de apertura guardado.");
+
+    await refreshAll();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+async function deleteOpeningBalance(id) {
+  if (!confirm("¿Eliminar este balance de apertura?")) {
+    return;
+  }
+
+  try {
+    await api(`/api/opening-balance/${id}`, {
+      method: "DELETE",
+    });
+
+    toast("Balance de apertura eliminado.");
+
+    await refreshAll();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
 function renderDTE(rows) {
   $("#dteBody").innerHTML =
     rows
@@ -572,43 +897,223 @@ function renderReliquidacion() {
     '<tr><td colspan="5" class="muted">Sin reliquidaciones con esos filtros.</td></tr>';
 }
 function renderExtract(rows) {
-  const q = ($("#extractSearch")?.value || "").toLowerCase(),
-    amt = parseAmount($("#extractAmount")?.value);
+  const q = ($("#extractSearch")?.value || "").toLowerCase();
+
+  const amt = parseAmount($("#extractAmount")?.value);
+
   const filtered = rows.filter((r) => {
     const hay = (
-      r.description +
+      (r.description || "") +
       " " +
-      r.reference +
+      (r.reference || "") +
       " " +
-      r.transaction_code +
+      (r.transaction_code || "") +
       " " +
-      r.movement_status
+      (r.movement_status || "") +
+      " " +
+      (r.movement_kind || "")
     ).toLowerCase();
+
     return (
       (!q || hay.includes(q)) &&
       (amt === null || Math.abs(Math.abs(Number(r.amount)) - amt) <= 0.01)
     );
   });
+
   $("#extractBody").innerHTML =
     filtered
       .map(
-        (r) =>
-          `<tr class="${r.effective ? "" : "movement-inactive"}"><td>${dateTimeFmt(r.posted_at)}</td><td>${esc(r.branch)}</td><td>${esc(r.description)}</td><td>${esc(r.reference)}</td><td>${esc(r.transaction_code)}</td><td class="num">${Number(r.debit) > 0 ? money(r.debit) : ""}</td><td class="num">${Number(r.credit) > 0 ? money(r.credit) : ""}</td><td>${badge(r.movement_status)}</td></tr>`,
+        (r) => `
+            <tr class="${r.effective ? "" : "movement-inactive"}">
+
+                <td>
+                    ${dateTimeFmt(r.posted_at)}
+                </td>
+
+                <td>
+                    ${esc(r.branch || "")}
+                </td>
+
+                <td>
+                    ${esc(r.description || "")}
+                </td>
+
+                <td>
+                    ${esc(r.reference || "")}
+                </td>
+
+                <td>
+                    ${esc(r.transaction_code || "")}
+                </td>
+
+                <td class="num">
+                    ${Number(r.debit) > 0 ? money(r.debit) : ""}
+                </td>
+
+                <td class="num">
+                    ${Number(r.credit) > 0 ? money(r.credit) : ""}
+                </td>
+
+                <td>
+                    ${badge(r.movement_status)}
+                </td>
+
+                <td>
+                    ${
+                      r.source === "MANUAL" && r.opening_balance_id
+                        ? `
+                                <button
+                                    class="btn danger"
+                                    onclick="deleteOpeningBalance(
+                                        ${r.opening_balance_id}
+                                    )"
+                                >
+                                    Eliminar
+                                </button>
+                              `
+                        : ""
+                    }
+                </td>
+
+            </tr>
+        `,
       )
       .join("") ||
-    '<tr><td colspan="8" class="muted">Sin movimientos con esos filtros.</td></tr>';
+    `
+            <tr>
+                <td
+                    colspan="9"
+                    class="muted"
+                >
+                    Sin movimientos con esos filtros.
+                </td>
+            </tr>
+        `;
 }
 function renderCompanies(rows) {
   $("#companyBody").innerHTML = rows
+
     .map(
       (r) => `<tr><td>${esc(r.name)}</td><td><b>${esc(r.abbr)}</b></td></tr>`,
     )
     .join("");
 }
+function renderCompanySelectors(){
+
+    const opening =
+        $('#openingCompany');
+
+    if (!opening) return;
+
+    const previous =
+        opening.value;
+
+    opening.innerHTML =
+        `
+        <option value="">
+            Seleccione empresa
+        </option>
+        `
+        +
+        state.companies
+        .map(c => `
+            <option value="${esc(c.name)}">
+                ${esc(c.name)}
+            </option>
+        `)
+        .join('');
+
+    if (
+        previous &&
+        [...opening.options]
+        .some(o => o.value === previous)
+    ){
+        opening.value = previous;
+    }
+}
 function renderSettings(s) {
   $("#paymentDays").value = s.payment_days;
   $("#tcSetting").value = s.current_tc;
   $("#tcCurrent").value = s.current_tc;
+}
+async function saveOpeningBalance(){
+
+    const company =
+        $('#openingCompany').value;
+
+    const posted_at =
+        $('#openingDate').value;
+
+    const side =
+        $('#openingSide').value;
+
+    const amount =
+        parseFloat(
+            $('#openingAmount').value
+        );
+
+    const note =
+        $('#openingNote').value.trim();
+
+    if (!company){
+        return toast(
+            'Seleccione una empresa.',
+            true
+        );
+    }
+
+    if (!posted_at){
+        return toast(
+            'Seleccione la fecha.',
+            true
+        );
+    }
+
+    if (!amount || amount <= 0){
+        return toast(
+            'Ingrese un monto válido.',
+            true
+        );
+    }
+
+    try{
+
+        await api(
+            '/api/opening-balance',
+            {
+                method:'POST',
+
+                headers:{
+                    'Content-Type':
+                        'application/json'
+                },
+
+                body:JSON.stringify({
+                    company,
+                    posted_at,
+                    side,
+                    amount,
+                    note
+                })
+            }
+        );
+
+        $('#openingAmount').value='';
+        $('#openingNote').value='';
+
+        toast(
+            'Saldo de apertura guardado.'
+        );
+
+        await refreshAll();
+
+    }catch(e){
+
+        toast(
+            e.message,
+            true
+        );
+    }
 }
 async function saveSettings() {
   try {
@@ -622,6 +1127,231 @@ async function saveSettings() {
   } catch (e) {
     toast(e.message, true);
   }
+}
+
+async function saveDebtMeta(
+    debtId,
+    field,
+    value
+) {
+
+    try {
+
+        await api(
+            '/api/debt-meta',
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type':
+                        'application/json'
+                },
+
+                body: JSON.stringify({
+
+                    debt_id: debtId,
+
+                    [field]: value
+                })
+            }
+        );
+
+        const debt =
+            state.debts.find(
+                d =>
+                    d.id === debtId
+            );
+
+        if (debt) {
+
+            debt[field] =
+                value.trim();
+        }
+
+        toast(
+            field === 'dte_number'
+            ? 'N.º DTE guardado.'
+            : 'Cbte guardado.'
+        );
+
+    } catch (e) {
+
+        toast(
+            e.message,
+            true
+        );
+    }
+}
+async function loadCompanyStatement() {
+
+    const company =
+        $('#statementCompany')
+        .value;
+
+    const asOf =
+        $('#statementAsOf')
+        .value;
+
+    if (!asOf) {
+
+        return toast(
+            'Seleccione la fecha hasta.',
+            true
+        );
+    }
+
+    try {
+
+        const data =
+            await api(
+
+                '/api/company-statement'
+                + '?company='
+                + encodeURIComponent(company)
+
+                + '&as_of='
+                + encodeURIComponent(asOf)
+            );
+
+        $('#statementTitle')
+            .innerHTML = `
+
+                <b>
+                    ${
+                        data.company
+                        === 'TODAS'
+                        ? 'Todas las empresas'
+                        : esc(data.company)
+                    }
+                </b>
+
+                · Informe hasta
+
+                <b>
+                    ${dateFmt(data.as_of)}
+                </b>
+            `;
+
+        $('#statementTotals')
+            .innerHTML = `
+
+                Debe:
+                <b>
+                    Bs ${
+                        money(
+                            data.summary.debit
+                        )
+                    }
+                </b>
+
+                &nbsp; · &nbsp;
+
+                Haber:
+                <b>
+                    Bs ${
+                        money(
+                            data.summary.credit
+                        )
+                    }
+                </b>
+
+                &nbsp; · &nbsp;
+
+                Saldo:
+                <b>
+                    Bs ${
+                        money(
+                            data.summary.balance
+                        )
+                    }
+                </b>
+            `;
+
+        $('#statementBody')
+            .innerHTML =
+
+            data.rows
+            .map(r => `
+
+                <tr>
+
+                    <td>
+                        ${esc(r.company)}
+                    </td>
+
+                    <td>
+                        ${dateFmt(r.date)}
+                    </td>
+
+                    <td>
+                        ${esc(
+                            r.transaction_code
+                            || ''
+                        )}
+                    </td>
+
+                    <td>
+                        ${esc(
+                            r.dte_number
+                            || ''
+                        )}
+                    </td>
+
+                    <td class="num">
+                        ${
+                            r.debit
+                            ? money(r.debit)
+                            : ''
+                        }
+                    </td>
+
+                    <td class="num">
+                        ${
+                            r.credit
+                            ? money(r.credit)
+                            : ''
+                        }
+                    </td>
+
+                    <td class="num">
+                        <b>
+                            ${money(r.balance)}
+                        </b>
+                    </td>
+
+                    <td>
+                        ${esc(
+                            r.voucher
+                            || ''
+                        )}
+                    </td>
+
+                </tr>
+
+            `)
+            .join('')
+
+            || `
+                <tr>
+
+                    <td
+                        colspan="8"
+                        class="muted"
+                    >
+                        No existen movimientos
+                        hasta esa fecha.
+                    </td>
+
+                </tr>
+            `;
+
+    } catch (e) {
+
+        toast(
+            e.message,
+            true
+        );
+    }
 }
 async function saveSettingsFull() {
   try {
@@ -970,6 +1700,270 @@ function drawLine(c, labels, vals) {
       ? `${best.label}\nBs ${money(best.value)}`
       : null;
   });
+}
+function todayISO() {
+
+    const d = new Date();
+
+    const pad = n =>
+        String(n).padStart(
+            2,
+            '0'
+        );
+
+    return (
+        d.getFullYear()
+        + '-'
+        + pad(
+            d.getMonth() + 1
+        )
+        + '-'
+        + pad(
+            d.getDate()
+        )
+    );
+}
+
+
+function renderCompanySelectors() {
+
+    const select =
+        $('#statementCompany');
+
+    if (!select) return;
+
+    const previous =
+        select.value;
+
+    select.innerHTML = `
+        <option value="__ALL__">
+            Todas las empresas
+        </option>
+
+        ${
+            state.companies
+            .map(c => `
+                <option
+                    value="${esc(c.name)}"
+                >
+                    ${esc(c.name)}
+                </option>
+            `)
+            .join('')
+        }
+    `;
+
+    if (
+        previous
+        && [
+            ...select.options
+        ].some(
+            o =>
+                o.value === previous
+        )
+    ) {
+
+        select.value =
+            previous;
+    }
+
+    const date =
+        $('#statementAsOf');
+
+    if (
+        date
+        && !date.value
+    ) {
+
+        date.value =
+            todayISO();
+
+
+    }
+
+    const opening =
+        $('#openingCompany');
+
+    if (opening) {
+
+        const previous =
+            opening.value;
+
+        opening.innerHTML =
+            `
+            <option value="">
+                Seleccione empresa
+            </option>
+            `
+            +
+            state.companies
+            .map(c => `
+                <option
+                    value="${esc(c.name)}"
+                >
+                    ${esc(c.name)}
+                </option>
+            `)
+            .join('');
+
+        if (previous) {
+            opening.value =
+                previous;
+        }
+    }
+}
+function monthLabel(value) {
+
+    if (!value) return '';
+
+    const [year, month] =
+        value.split('-');
+
+    return new Intl
+        .DateTimeFormat(
+            'es-BO',
+            {
+                month: 'long',
+                year: 'numeric'
+            }
+        )
+        .format(
+            new Date(
+                Number(year),
+                Number(month) - 1,
+                1
+            )
+        );
+}
+
+
+function renderCompanyPortfolio() {
+
+    const rows =
+        state.summary
+        ?.company_balances
+        || [];
+
+    const asOf =
+        state.summary
+        ?.as_of;
+
+    if ($('#portfolioAsOf')) {
+
+        $('#portfolioAsOf')
+            .textContent =
+            asOf
+            ? `Cartera al ${dateFmt(asOf)}`
+            : '';
+    }
+
+    $('#companyPortfolioBody')
+        .innerHTML = rows
+        .map(r => {
+
+            const owed =
+                r.months_owed
+                .map(monthLabel)
+                .join(', ');
+
+            const detail =
+                r.months
+                .map(m => {
+
+                    const cls =
+                        m.balance < 0
+                        ? 'adjustment'
+                        : '';
+
+                    return `
+                        <div
+                            class="month-line ${cls}"
+                        >
+                            <span>
+                                ${monthLabel(m.month)}
+                            </span>
+
+                            <b>
+                                Bs ${money(m.balance)}
+                            </b>
+                        </div>
+                    `;
+
+                })
+                .join('');
+
+            return `
+                <tr>
+
+                    <td>
+                        <b>
+                            ${esc(r.company)}
+                        </b>
+                    </td>
+
+                    <td class="num">
+                        ${money(r.debit)}
+                    </td>
+
+                    <td class="num">
+                        ${money(r.credit)}
+                    </td>
+
+                    <td class="num">
+                        <b>
+                            ${money(r.balance)}
+                        </b>
+                    </td>
+
+                    <td class="num">
+                        ${money(r.due_soon)}
+                    </td>
+
+                    <td class="num">
+                        ${money(r.overdue)}
+                    </td>
+
+                    <td class="num">
+                        ${r.pending_docs}
+                    </td>
+
+                    <td>
+                        ${
+                            owed
+                            || '—'
+                        }
+                    </td>
+
+                    <td>
+
+                        ${
+                            detail
+                            ? `
+                                <details>
+
+                                    <summary>
+                                        ${r.month_count}
+                                        mes(es) pendientes
+                                    </summary>
+
+                                    <div
+                                        class="month-detail"
+                                    >
+                                        ${detail}
+                                    </div>
+
+                                </details>
+                            `
+                            : '—'
+                        }
+
+                    </td>
+
+                </tr>
+            `;
+
+        })
+        .join('');
 }
 window.addEventListener("resize", () => {
   if (state.summary) renderDashboard();

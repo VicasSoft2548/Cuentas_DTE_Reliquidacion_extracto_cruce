@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS debts (
     concept TEXT NOT NULL,
     company TEXT NOT NULL,
     amount REAL NOT NULL,
+    dte_number TEXT,
+    voucher TEXT,
     occurrence INTEGER NOT NULL DEFAULT 1,
     active INTEGER NOT NULL DEFAULT 1,
     imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -69,6 +71,15 @@ CREATE TABLE IF NOT EXISTS matches (
 );
 CREATE INDEX IF NOT EXISTS idx_matches_debt ON matches(debt_id);
 CREATE INDEX IF NOT EXISTS idx_matches_dep ON matches(deposit_id);
+CREATE TABLE IF NOT EXISTS opening_balances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company TEXT NOT NULL DEFAULT '',
+    posted_at TEXT NOT NULL,
+    side TEXT NOT NULL CHECK(side IN ('DEBE','HABER')),
+    amount REAL NOT NULL CHECK(amount > 0),
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -110,6 +121,8 @@ def init_db() -> None:
     with connect() as con:
         con.executescript(SCHEMA)
         _ensure_deposit_columns(con)
+        _ensure_debt_columns(con)
+        _ensure_opening_balance_columns(con)
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('payment_days','30')")
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('current_tc','11.77')")
 
@@ -381,16 +394,324 @@ def debt_rows(con: sqlite3.Connection) -> list[dict[str, Any]]:
         erosion_pct = last_with_meta["erosion_pct"] * 100 if last_with_meta and last_with_meta["erosion_pct"] is not None else ((erosion_usd / usd_due * 100) if erosion_usd is not None and usd_due else None)
         rows.append({
             "id": d["id"], "date": d["source_date"], "concept": d["concept"], "company": d["company"],
-            "reference": ref, "transaction_code": tx,
-            "amount": round(float(d["amount"]), 2), "paid": paid, "pending": pending,
-            "pending_usd": round(pending / current_tc, 2) if current_tc else None,
-            "due_date": due, "last_payment": last_payment, "days_to_payment": days_to_pay,
-            "days_late": mora, "status": status, "manual": manual, "match_count": len(ms),
-            "tc_dte": tc_dte, "tc_payment": tc_payment, "tc_due": tc_due, "tc_current": current_tc,
-            "usd_due": round(usd_due,2) if usd_due is not None else None,
-            "usd_today": round(usd_today,2) if usd_today is not None else None,
-            "erosion_usd": round(erosion_usd,2) if erosion_usd is not None else None,
-            "erosion_bs": round(erosion_bs,2) if erosion_bs is not None else None,
-            "erosion_pct": round(erosion_pct,2) if erosion_pct is not None else None,
+             "dte_number": d["dte_number"], "voucher": d["voucher"],"reference": ref,"transaction_code": tx,
+            "amount": round(
+                float(d["amount"]),
+                2
+            ),
+
+            "paid": paid,"pending": pending,
+
+            # =========================
+            # CUENTA CORRIENTE
+            # =========================
+
+            "debit": round(max(float(d["amount"]),0),2),
+            "credit": round( paid if float(d["amount"]) >= 0 else abs(float(d["amount"])),2),
+            "balance": pending, "pending_usd": (round(pending / current_tc,2) if current_tc else None),
+            "due_date": due,"last_payment": last_payment,"days_to_payment": days_to_pay,"days_late": mora,
+            "status": status,"manual": manual,"match_count": len(ms),
+            "tc_dte": tc_dte,"tc_payment": tc_payment,"tc_due": tc_due,"tc_current": current_tc,
+            "usd_due": (round(usd_due, 2) if usd_due is not None else None),
+            "usd_today": ( round(usd_today, 2) if usd_today is not None else None),
+            "erosion_usd": ( round(erosion_usd, 2) if erosion_usd is not None else None),
+            "erosion_bs": ( round(erosion_bs, 2) if erosion_bs is not None else None),
+            "erosion_pct": (round(erosion_pct, 2) if erosion_pct is not None else None),
         })
+
     return rows
+
+def company_balance_rows(con: sqlite3.Connection
+) -> list[dict[str, Any]]:
+
+    debts = debt_rows(con)
+
+    openings = list(
+        con.execute("""
+            SELECT
+                company,
+                posted_at,
+                side,
+                amount,
+                note
+            FROM opening_balances
+        """)
+    )
+
+    # Todas las empresas del catálogo.
+    # Aunque tengan saldo 0.
+    names = {
+        r["name"]
+        for r in con.execute(
+            "SELECT name FROM companies"
+        )
+    }
+
+    # Por seguridad incluir empresas
+    # que aparezcan en deuda.
+    names.update(
+        d["company"]
+        for d in debts
+        if d["company"]
+    )
+
+    names.update(
+        (o["company"] or "SIN EMPRESA")
+        for o in openings
+    )
+
+    data = {}
+
+    for name in names:
+
+        data[name] = {
+
+            "company": name,
+            "debit": 0.0,
+            "credit": 0.0,
+            "balance": 0.0,
+            "due_soon": 0.0,
+            "overdue": 0.0,
+            "pending_docs": 0,
+            "_months": defaultdict(float),
+        }
+
+    # =========================
+    # DEUDAS
+    # =========================
+
+    for d in debts:
+
+        name = (
+            d["company"]
+            or "SIN EMPRESA"
+        )
+        row = data[name]
+        amount = float(
+            d["amount"] or 0
+        )
+        paid = float(
+            d["paid"] or 0
+        )
+        pending = float(
+            d["pending"] or 0
+        )
+        if amount >= 0:
+
+            row["debit"] += amount
+
+            row["credit"] += paid
+        else:
+
+            # Reliquidación negativa
+            # funciona como Haber.
+            row["credit"] += abs(amount)
+        row["balance"] += pending
+
+        # =====================
+        # DETALLE POR MES
+        # =====================
+
+        if (
+            d["date"]
+            and abs(pending) > 0.01
+        ):
+            month = d["date"][:7]
+
+            row["_months"][month] += (
+                pending
+            )
+
+        # Solo documentos positivos
+        # realmente pendientes.
+        if (
+            amount > 0
+            and pending > 0.01
+        ):
+            row["pending_docs"] += 1
+
+            if "VENCIDO" in (
+                d["status"] or ""
+            ):
+                row["overdue"] += (
+                    pending
+                )
+            elif "POR VENCER" in (
+                d["status"] or ""
+            ):
+                row["due_soon"] += (
+                    pending
+                )
+
+    # =========================
+    # SALDOS DE APERTURA
+    # =========================
+    for o in openings:
+
+        name = (
+            o["company"]
+            or "SIN EMPRESA"
+        )
+        if name not in data:
+            data[name] = {
+
+                "company": name,
+                "debit": 0.0,
+                "credit": 0.0,
+                "balance": 0.0,
+                "due_soon": 0.0,
+                "overdue": 0.0,
+                "pending_docs": 0,
+                "_months": defaultdict(float),
+            }
+
+        row = data[name]
+        amount = float(
+            o["amount"] or 0
+        )
+        if (
+            o["side"] or ""
+        ).upper() == "DEBE":
+
+            row["debit"] += amount
+
+            row["balance"] += amount
+
+        else:
+
+            row["credit"] += amount
+
+            row["balance"] -= amount
+
+    # =========================
+    # FORMATO FINAL
+    # =========================
+
+    result = []
+
+    for row in data.values():
+
+        months = [
+
+            {
+                "month": month,
+                "balance": round(
+                    value,
+                    2
+                )
+            }
+
+            for month, value
+            in sorted(
+                row.pop("_months").items()
+            )
+
+            if abs(value) > 0.01
+        ]
+
+        row["months"] = months
+
+        # Meses que realmente debe.
+        # Los ajustes negativos se muestran
+        # pero no cuentan como "mes adeudado".
+        row["months_owed"] = [
+
+            x["month"]
+
+            for x in months
+
+            if x["balance"] > 0.01
+        ]
+
+        row["month_count"] = len(
+            row["months_owed"]
+        )
+
+        for key in (
+            "debit",
+            "credit",
+            "balance",
+            "due_soon",
+            "overdue",
+        ):
+
+            row[key] = round(
+                row[key],
+                2
+            )
+
+        result.append(row)
+
+    # NO limitar a top 10 ni top 12.
+    # Se devuelven TODAS.
+    return sorted(
+        result,
+        key=lambda r: (
+            -r["balance"],
+            r["company"]
+        )
+    )
+def _ensure_debt_columns(con: sqlite3.Connection) -> None:
+
+    cols = {
+        r["name"]
+        for r in con.execute(
+            "PRAGMA table_info(debts)"
+        )
+    }
+
+    additions = {
+        "dte_number": "TEXT",
+        "voucher": "TEXT",
+    }
+
+    for name, ddl in additions.items():
+
+        if name not in cols:
+
+            con.execute(
+                f"""
+                ALTER TABLE debts
+                ADD COLUMN {name} {ddl}
+                """
+            )
+
+def _ensure_opening_balance_columns(
+    con: sqlite3.Connection
+) -> None:
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS opening_balances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            company TEXT NOT NULL DEFAULT '',
+
+            posted_at TEXT NOT NULL,
+
+            side TEXT NOT NULL
+                CHECK(side IN ('DEBE','HABER')),
+
+            amount REAL NOT NULL
+                CHECK(amount > 0),
+
+            note TEXT,
+
+            created_at TEXT NOT NULL
+                DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cols = {
+        r["name"]
+        for r in con.execute(
+            "PRAGMA table_info(opening_balances)"
+        )
+    }
+
+    if "company" not in cols:
+
+        con.execute("""
+            ALTER TABLE opening_balances
+            ADD COLUMN company TEXT
+            NOT NULL DEFAULT ''
+        """)
